@@ -19,7 +19,8 @@ import {
     FileText,
     User,
     Brain,
-    ClipboardList
+    ClipboardList,
+    History
 } from 'lucide-react';
 
 const NAV_ITEMS = [
@@ -32,6 +33,7 @@ const NAV_ITEMS = [
     { icon: BookMarked, label: 'AI Tutor', path: '/dashboard/notes' },
     { icon: Brain, label: 'Quiz', path: '/dashboard/quiz' },
     { icon: ClipboardList, label: 'PYQ', path: '/dashboard/pyq' },
+    { icon: History, label: 'Revision', path: '/dashboard/revision' },
 ];
 
 export default function DashboardLayout() {

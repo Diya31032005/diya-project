@@ -1,14 +1,16 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { logStudySession, subscribeToRecentLogs } from '../lib/db';
-import { Play, Pause, Square, RotateCcw, Target, PenLine, Clock, BookOpen, Calendar, ChevronDown, ChevronUp, PlusCircle, Save } from 'lucide-react';
+import { logStudySession, subscribeToRecentLogs, deleteLog, updateLog } from '../lib/db';
+import { Play, Pause, Square, RotateCcw, Target, PenLine, Clock, BookOpen, Calendar, ChevronDown, ChevronUp, PlusCircle, Save, Trash2, Edit2 } from 'lucide-react';
 import { formatDistanceToNow, format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import toast from '../components/ui/Toast';
+import { ConfirmDialog, useConfirmDialog } from '../components/ui/ConfirmDialog';
 
 export default function Tracker() {
     const { user } = useAuth();
+    const location = useLocation();
     const [mode, setMode] = useState('stopwatch'); // 'stopwatch', 'pomodoro', 'manual'
     const [isRunning, setIsRunning] = useState(false);
     const [elapsed, setElapsed] = useState(0);
@@ -19,7 +21,8 @@ export default function Tracker() {
     const [manualMinutes, setManualMinutes] = useState('');
     const [manualDate, setManualDate] = useState(format(new Date(), 'yyyy-MM-dd'));
 
-    const location = useLocation();
+    const [editingSessionId, setEditingSessionId] = useState(null);
+    const { dialogProps, confirm } = useConfirmDialog();
 
     useEffect(() => {
         if (location.state?.quickSession) {
@@ -47,7 +50,7 @@ export default function Tracker() {
 
     useEffect(() => {
         if (!user) return;
-        const unsub = subscribeToRecentLogs(user.uid, 10, (logs) => {
+        const unsub = subscribeToRecentLogs(user.uid, 50, (logs) => {
             setRecentSessions(logs);
         });
         return () => unsub();
@@ -124,7 +127,24 @@ export default function Tracker() {
         const selectedDate = new Date(manualDate);
         selectedDate.setHours(12, 0, 0, 0); // Set to noon to avoid timezone issues
 
-        await saveSession(totalMinutes, selectedDate.toISOString());
+        if (editingSessionId) {
+            const success = await updateLog(user.uid, editingSessionId, {
+                durationMinutes: totalMinutes,
+                date: selectedDate.toISOString(),
+                subject,
+                topic,
+                notes: sessionNotes
+            });
+            if (success) {
+                toast.success('Session updated successfully!');
+                setEditingSessionId(null);
+                setMode('stopwatch'); // Reset mode
+            } else {
+                toast.error('Failed to update session');
+            }
+        } else {
+            await saveSession(totalMinutes, selectedDate.toISOString());
+        }
 
         // Reset manual entry fields
         setManualHours('');
@@ -132,6 +152,50 @@ export default function Tracker() {
         setManualDate(format(new Date(), 'yyyy-MM-dd'));
         setTopic('');
         setSessionNotes('');
+        setSubject('GS1');
+    };
+
+    const handleDeleteLog = async (logId) => {
+        const confirmed = await confirm({
+            title: 'Delete Session',
+            message: 'Are you sure you want to delete this session? This will deduct the hours from your analytical stats.',
+            confirmText: 'Delete',
+            isDangerous: true
+        });
+
+        if (confirmed) {
+            const success = await deleteLog(user.uid, logId);
+            if (success) {
+                toast.success('Session deleted');
+            } else {
+                toast.error('Failed to delete session');
+            }
+        }
+    };
+
+    const handleEditLog = (session) => {
+        setEditingSessionId(session.id);
+        setMode('manual');
+
+        // Populate inputs
+        const hours = Math.floor(session.durationMinutes / 60);
+        const minutes = session.durationMinutes % 60;
+        setManualHours(hours.toString());
+        setManualMinutes(minutes.toString());
+
+        // Handle date parsing safely
+        let dateStr = format(new Date(), 'yyyy-MM-dd');
+        try {
+            if (session.date) dateStr = format(new Date(session.date), 'yyyy-MM-dd');
+        } catch (e) { }
+        setManualDate(dateStr);
+
+        setSubject(session.subject || 'GS1');
+        setTopic(session.topic || '');
+        setSessionNotes(session.notes || '');
+
+        // Scroll to top
+        window.scrollTo({ top: 0, behavior: 'smooth' });
     };
 
     const saveSession = async (duration, timestamp) => {
@@ -471,30 +535,49 @@ export default function Tracker() {
                                                     </div>
                                                     <div className="text-xs text-[#71717A] flex items-center gap-1 justify-end font-light">
                                                         <Calendar className="w-3 h-3" />
-                                                        {(() => {
-                                                            try {
-                                                                let dateObj;
-                                                                if (session.date) {
-                                                                    dateObj = new Date(session.date);
-                                                                } else if (session.timestamp) {
-                                                                    // Handle Firestore Timestamp
-                                                                    if (session.timestamp.toDate) {
-                                                                        dateObj = session.timestamp.toDate();
-                                                                    } else if (session.timestamp.seconds) {
-                                                                        dateObj = new Date(session.timestamp.seconds * 1000);
-                                                                    } else {
-                                                                        dateObj = new Date(session.timestamp);
+                                                        {session.timestamp
+                                                            ? (() => {
+                                                                try {
+                                                                    let dateObj;
+                                                                    if (session.date) {
+                                                                        dateObj = new Date(session.date);
+                                                                    } else if (session.timestamp) {
+                                                                        // Handle Firestore Timestamp
+                                                                        if (session.timestamp.toDate) {
+                                                                            dateObj = session.timestamp.toDate();
+                                                                        } else if (session.timestamp.seconds) {
+                                                                            dateObj = new Date(session.timestamp.seconds * 1000);
+                                                                        } else {
+                                                                            dateObj = new Date(session.timestamp);
+                                                                        }
                                                                     }
-                                                                }
 
-                                                                if (dateObj && !isNaN(dateObj.getTime())) {
-                                                                    return formatDistanceToNow(dateObj, { addSuffix: true });
+                                                                    if (dateObj && !isNaN(dateObj.getTime())) {
+                                                                        return formatDistanceToNow(dateObj, { addSuffix: true });
+                                                                    }
+                                                                    return 'Recently';
+                                                                } catch (e) {
+                                                                    return 'Recently';
                                                                 }
-                                                                return 'Recently';
-                                                            } catch (e) {
-                                                                return 'Recently';
-                                                            }
-                                                        })()}
+                                                            })()
+                                                            : 'Recently'
+                                                        }
+                                                    </div>
+                                                    <div className="flex gap-1 justify-end mt-1">
+                                                        <button
+                                                            onClick={() => handleEditLog(session)}
+                                                            className="p-1 rounded hover:bg-black/5 dark:hover:bg-white/10 text-[#71717A] hover:text-black dark:hover:text-white"
+                                                            title="Edit"
+                                                        >
+                                                            <Edit2 className="w-3 h-3" />
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleDeleteLog(session.id)}
+                                                            className="p-1 rounded hover:bg-red-500/10 text-[#71717A] hover:text-red-500"
+                                                            title="Delete"
+                                                        >
+                                                            <Trash2 className="w-3 h-3" />
+                                                        </button>
                                                     </div>
                                                 </div>
                                             </div>
@@ -506,6 +589,7 @@ export default function Tracker() {
                     )}
                 </AnimatePresence>
             </div>
+            <ConfirmDialog {...dialogProps} />
         </div>
     );
 }

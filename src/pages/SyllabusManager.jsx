@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { SYLLABUS_DATA } from '../lib/syllabus-data';
 import { ChevronRight, ChevronDown, CheckCircle2, Circle, BookOpen, Plus, Trash2, RotateCcw, X, Search, CheckSquare, Filter, FolderPlus, Folder, ChevronLeft, Edit2, Save } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { updateUserProgress, saveUserSyllabus } from '../lib/db';
+import { updateUserProgress, saveUserSyllabus, subscribeToUserSyllabus } from '../lib/db';
 import { ConfirmDialog, useConfirmDialog } from '../components/ui/ConfirmDialog';
 import toast from '../components/ui/Toast';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -18,6 +18,7 @@ const DEFAULT_SYLLABI = {
 export default function SyllabusManager() {
     const { user } = useAuth();
     const { dialogProps, confirm } = useConfirmDialog();
+    const isRemoteUpdate = useRef(false);
 
     // Multiple syllabi support
     const [syllabi, setSyllabi] = useState(() => {
@@ -38,6 +39,21 @@ export default function SyllabusManager() {
         return saved || 'upsc-prelims';
     });
 
+    // Subscribe to Firebase Updates (Real-time Sync)
+    useEffect(() => {
+        if (!user) return;
+        const unsub = subscribeToUserSyllabus(user.uid, (data) => {
+            if (data && data.syllabi) {
+                isRemoteUpdate.current = true;
+                setSyllabi(data.syllabi);
+                if (data.activeSyllabusId) {
+                    setActiveSyllabusId(data.activeSyllabusId);
+                }
+            }
+        });
+        return () => unsub();
+    }, [user]);
+
     const [showSyllabusList, setShowSyllabusList] = useState(false);
     const [isCreatingNew, setIsCreatingNew] = useState(false);
     const [newSyllabusName, setNewSyllabusName] = useState('');
@@ -56,21 +72,18 @@ export default function SyllabusManager() {
     const completedCount = completedItems.size;
     const progress = totalItems > 0 ? (completedCount / totalItems) * 100 : 0;
 
-    // Sync to localStorage
+    // Sync to localStorage and Firestore
     useEffect(() => {
         localStorage.setItem('syllabi_list', JSON.stringify(syllabi));
-        if (user) {
-            saveUserSyllabus(user.uid, { syllabi, activeSyllabusId });
-        }
-    }, [syllabi, activeSyllabusId, user]);
-
-    useEffect(() => {
         localStorage.setItem('active_syllabus', activeSyllabusId);
-    }, [activeSyllabusId]);
 
-    // Sync overall progress to DB
-    useEffect(() => {
         if (user) {
+            if (isRemoteUpdate.current) {
+                isRemoteUpdate.current = false;
+                return; // Skip saving to Firestore if this was a remote update
+            }
+            saveUserSyllabus(user.uid, { syllabi, activeSyllabusId });
+
             // Calculate total progress across all syllabi
             let totalCompleted = 0;
             let totalTopics = 0;
@@ -80,7 +93,8 @@ export default function SyllabusManager() {
             });
             updateUserProgress(user.uid, totalCompleted, totalTopics);
         }
-    }, [syllabi, user]);
+    }, [syllabi, activeSyllabusId, user]);
+
 
     // Filter and search logic
     const filteredItems = useMemo(() => {
