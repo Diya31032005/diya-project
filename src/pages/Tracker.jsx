@@ -471,10 +471,30 @@ export default function Tracker() {
                                                     </div>
                                                     <div className="text-xs text-[#71717A] flex items-center gap-1 justify-end font-light">
                                                         <Calendar className="w-3 h-3" />
-                                                        {session.timestamp
-                                                            ? formatDistanceToNow(new Date(session.timestamp), { addSuffix: true })
-                                                            : 'Recently'
-                                                        }
+                                                        {(() => {
+                                                            try {
+                                                                let dateObj;
+                                                                if (session.date) {
+                                                                    dateObj = new Date(session.date);
+                                                                } else if (session.timestamp) {
+                                                                    // Handle Firestore Timestamp
+                                                                    if (session.timestamp.toDate) {
+                                                                        dateObj = session.timestamp.toDate();
+                                                                    } else if (session.timestamp.seconds) {
+                                                                        dateObj = new Date(session.timestamp.seconds * 1000);
+                                                                    } else {
+                                                                        dateObj = new Date(session.timestamp);
+                                                                    }
+                                                                }
+
+                                                                if (dateObj && !isNaN(dateObj.getTime())) {
+                                                                    return formatDistanceToNow(dateObj, { addSuffix: true });
+                                                                }
+                                                                return 'Recently';
+                                                            } catch (e) {
+                                                                return 'Recently';
+                                                            }
+                                                        })()}
                                                     </div>
                                                 </div>
                                             </div>

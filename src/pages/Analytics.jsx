@@ -19,48 +19,11 @@ import { jsPDF } from 'jspdf';
 import 'jspdf-autotable';
 import { motion, AnimatePresence } from 'framer-motion';
 
-// Paper/Subject configuration
-const PAPERS = [
-    { id: 'gs1', name: 'GS Paper 1', short: 'GS1', color: '#3B82F6' },
-    { id: 'gs2', name: 'GS Paper 2', short: 'GS2', color: '#10B981' },
-    { id: 'gs3', name: 'GS Paper 3', short: 'GS3', color: '#F59E0B' },
-    { id: 'gs4', name: 'GS Paper 4', short: 'GS4', color: '#EF4444' },
-    { id: 'optional1', name: 'Optional 1', short: 'Opt1', color: '#8B5CF6' },
-    { id: 'optional2', name: 'Optional 2', short: 'Opt2', color: '#EC4899' },
-];
+// Palette for dynamic papers
+const COLORS = ['#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899', '#06B6D4', '#F43F5E', '#14B8A6', '#6366F1'];
 
-// Subject to Paper mapping for auto-detection
-const SUBJECT_TO_PAPER = {
-    // GS1 subjects
-    'indian heritage': 'gs1', 'culture': 'gs1', 'history': 'gs1', 'art & culture': 'gs1',
-    'indian history': 'gs1', 'world history': 'gs1', 'geography': 'gs1', 'society': 'gs1',
-    'post independence': 'gs1', 'freedom struggle': 'gs1',
-    // GS2 subjects
-    'polity': 'gs2', 'governance': 'gs2', 'constitution': 'gs2', 'international relations': 'gs2',
-    'social justice': 'gs2', 'ir': 'gs2', 'india relations': 'gs2',
-    // GS3 subjects
-    'economy': 'gs3', 'economics': 'gs3', 'environment': 'gs3', 'ecology': 'gs3',
-    'science & technology': 'gs3', 'science': 'gs3', 'technology': 'gs3', 'security': 'gs3',
-    'disaster management': 'gs3', 'agriculture': 'gs3', 'biodiversity': 'gs3',
-    // GS4 subjects
-    'ethics': 'gs4', 'integrity': 'gs4', 'aptitude': 'gs4', 'case study': 'gs4',
-    'case studies': 'gs4', 'emotional intelligence': 'gs4', 'attitude': 'gs4',
-    // Essay
-    'essay': 'essay',
-    // Optional - will be detected based on user's optional subject
-    'anthropology': 'optional1', 'sociology': 'optional1', 'psychology': 'optional1',
-    'geography optional': 'optional1', 'pub ad': 'optional1', 'public administration': 'optional1',
-};
-
-// Auto-detect paper from topic/subject
-const detectPaper = (subject, topic) => {
-    const combined = `${subject || ''} ${topic || ''}`.toLowerCase();
-    for (const [keyword, paper] of Object.entries(SUBJECT_TO_PAPER)) {
-        if (combined.includes(keyword)) {
-            return paper;
-        }
-    }
-    return 'general';
+const getInitials = (name) => {
+    return name.split(' ').map(n => n[0]).join('').substring(0, 3).toUpperCase();
 };
 
 export default function Analytics() {
@@ -104,26 +67,108 @@ export default function Analytics() {
 
     // ===== COMPREHENSIVE ANALYTICS =====
 
-    // 1. Paper-wise Hours Distribution
+    // 1. Dynamic Syllabus Processing (Papers & Mapping)
+    const { dynamicPapers, subjectMap } = useMemo(() => {
+        if (!syllabusData || !syllabusData.syllabi) {
+            return { dynamicPapers: [], subjectMap: new Map() };
+        }
+
+        // Get active syllabus (prefer Firestore data, fallback to localStorage or first available)
+        const activeId = syllabusData.activeSyllabusId || localStorage.getItem('active_syllabus');
+        const activeSyllabus = (activeId && syllabusData.syllabi[activeId]) || Object.values(syllabusData.syllabi)[0];
+
+        if (!activeSyllabus || !activeSyllabus.items) {
+            return { dynamicPapers: [], subjectMap: new Map() };
+        }
+
+        const map = new Map();
+        const papers = activeSyllabus.items.map((item, index) => {
+            // Count totals and completed
+            let total = 0;
+            let completed = 0;
+            const completedSet = new Set(activeSyllabus.completed || []);
+
+            const traverse = (node) => {
+                total++;
+                if (completedSet.has(node.id)) completed++;
+
+                // Map this node's title to the Parent Paper ID
+                map.set(node.title.toLowerCase(), item.id);
+
+                if (node.children) node.children.forEach(traverse);
+            };
+            traverse(item);
+
+            return {
+                id: item.id,
+                name: item.title,
+                short: getInitials(item.title),
+                color: COLORS[index % COLORS.length],
+                total: total,
+                completed: completed,
+                progress: total > 0 ? Math.round((completed / total) * 100) : 0
+            };
+        });
+
+        return { dynamicPapers: papers, subjectMap: map };
+    }, [syllabusData]); // Depend on syllabusData from DB
+
+    // 2. Paper-wise Hours Distribution
     const paperHours = useMemo(() => {
+        if (dynamicPapers.length === 0) return [];
+
         const data = {};
-        PAPERS.forEach(p => { data[p.id] = 0; });
+        dynamicPapers.forEach(p => { data[p.id] = 0; });
+        data['other'] = 0;
 
         filteredLogs.forEach(log => {
-            const paper = detectPaper(log.subject, log.topic);
-            if (data[paper] !== undefined) {
-                data[paper] += (log.durationMinutes || 0) / 60;
+            const subjectLower = (log.subject || '').toLowerCase();
+            const topicLower = (log.topic || '').toLowerCase();
+
+            // Try to find paper ID from map
+            let paperId = subjectMap.get(subjectLower) || subjectMap.get(topicLower);
+
+            // If not found, try partial match against paper names
+            if (!paperId) {
+                const found = dynamicPapers.find(p =>
+                    subjectLower.includes(p.name.toLowerCase()) ||
+                    p.name.toLowerCase().includes(subjectLower)
+                );
+                if (found) paperId = found.id;
+            }
+
+            if (paperId && data[paperId] !== undefined) {
+                data[paperId] += (log.durationMinutes || 0) / 60;
+            } else {
+                data['other'] += (log.durationMinutes || 0) / 60;
             }
         });
 
-        return PAPERS.map(p => ({
+        // Filter out 'other' if 0 or keep it if relevant
+        const result = dynamicPapers.map(p => ({
             ...p,
             hours: parseFloat((data[p.id] || 0).toFixed(1)),
             fill: p.color
         }));
-    }, [filteredLogs]);
 
-    // 2. Daily/Weekly/Monthly Trends
+        if (data['other'] > 0.5) { // Only show 'Other' if significant
+            result.push({
+                id: 'other',
+                name: 'Other',
+                short: 'OTH',
+                color: '#9CA3AF',
+                hours: parseFloat(data['other'].toFixed(1)),
+                fill: '#9CA3AF',
+                progress: 0,
+                total: 0,
+                completed: 0
+            });
+        }
+
+        return result;
+    }, [filteredLogs, dynamicPapers, subjectMap]);
+
+    // 3. Daily/Weekly/Monthly Trends
     const trendData = useMemo(() => {
         const daysCount = timeRange === '7d' ? 7 : timeRange === '30d' ? 30 : 15;
         const daysMap = new Map();
@@ -149,7 +194,7 @@ export default function Analytics() {
         }));
     }, [filteredLogs, timeRange]);
 
-    // 3. Subject Distribution
+    // 4. Subject Distribution
     const subjectData = useMemo(() => {
         const data = {};
         filteredLogs.forEach(log => {
@@ -161,7 +206,7 @@ export default function Analytics() {
             .sort((a, b) => b.hours - a.hours);
     }, [filteredLogs]);
 
-    // 4. Weekly Comparison (This week vs Last week)
+    // 5. Weekly Comparison (This week vs Last week)
     const weeklyComparison = useMemo(() => {
         const now = new Date();
         const thisWeekStart = startOfWeek(now, { weekStartsOn: 1 });
@@ -187,7 +232,7 @@ export default function Analytics() {
         return { thisWeek: thisWeekHours.toFixed(1), lastWeek: lastWeekHours.toFixed(1), change };
     }, [logs]);
 
-    // 5. Daily Average
+    // 6. Daily Average
     const dailyAverage = useMemo(() => {
         if (filteredLogs.length === 0) return 0;
         const totalHours = filteredLogs.reduce((acc, l) => acc + (l.durationMinutes || 0) / 60, 0);
@@ -195,7 +240,7 @@ export default function Analytics() {
         return (totalHours / daysCount).toFixed(1);
     }, [filteredLogs, timeRange]);
 
-    // 6. Study Session Analysis (Mode distribution: Stopwatch, Pomodoro, Manual)
+    // 7. Study Session Analysis (Mode distribution: Stopwatch, Pomodoro, Manual)
     const modeDistribution = useMemo(() => {
         const modes = { stopwatch: 0, pomodoro: 0, manual: 0 };
         filteredLogs.forEach(log => {
@@ -208,7 +253,7 @@ export default function Analytics() {
         }));
     }, [filteredLogs]);
 
-    // 7. Peak Study Hours
+    // 8. Peak Study Hours
     const peakHours = useMemo(() => {
         const hourCounts = {};
         filteredLogs.forEach(log => {
@@ -223,35 +268,10 @@ export default function Analytics() {
             .slice(0, 5);
     }, [filteredLogs]);
 
-    // 8. Syllabus Progress per Paper
+    // 8. Syllabus Progress per Paper (Mapped directly from dynamicPapers)
     const syllabusProgress = useMemo(() => {
-        if (!syllabusData?.syllabi) return PAPERS.map(p => ({ ...p, progress: 0 }));
-
-        const progress = {};
-        PAPERS.forEach(p => { progress[p.id] = { total: 0, completed: 0 }; });
-
-        Object.values(syllabusData.syllabi).forEach(syllabus => {
-            if (!syllabus.subjects) return;
-            syllabus.subjects.forEach(subject => {
-                const paper = detectPaper(subject.name, '');
-                if (progress[paper]) {
-                    subject.topics?.forEach(topic => {
-                        progress[paper].total += 1;
-                        if (topic.completed) progress[paper].completed += 1;
-                    });
-                }
-            });
-        });
-
-        return PAPERS.map(p => ({
-            ...p,
-            progress: progress[p.id].total > 0
-                ? Math.round((progress[p.id].completed / progress[p.id].total) * 100)
-                : 0,
-            completed: progress[p.id].completed,
-            total: progress[p.id].total
-        }));
-    }, [syllabusData]);
+        return dynamicPapers;
+    }, [dynamicPapers]);
 
     // 9. Quiz Performance by Subject
     const quizPerformance = useMemo(() => {
@@ -359,8 +379,8 @@ export default function Analytics() {
                         key={tab.id}
                         onClick={() => setActiveTab(tab.id)}
                         className={`flex items-center gap-2 px-4 py-2 rounded text-sm font-medium transition-all ${activeTab === tab.id
-                                ? 'bg-black text-white dark:bg-white dark:text-black'
-                                : 'text-[#71717A] hover:text-black dark:hover:text-white'
+                            ? 'bg-black text-white dark:bg-white dark:text-black'
+                            : 'text-[#71717A] hover:text-black dark:hover:text-white'
                             }`}
                     >
                         <tab.icon className="w-4 h-4" />
@@ -370,17 +390,17 @@ export default function Analytics() {
             </div>
 
             {/* Time Range Filter */}
-            <div className="card p-2 inline-flex">
-                {['7d', '30d', '90d', 'year'].map((range) => (
+            <div className="card p-2 inline-flex flex-wrap gap-1">
+                {['7d', '30d', '90d', 'year', 'all'].map((range) => (
                     <button
                         key={range}
                         onClick={() => setTimeRange(range)}
                         className={`px-4 py-2 rounded text-sm font-medium transition-all ${timeRange === range
-                                ? 'bg-black text-white dark:bg-white dark:text-black'
-                                : 'text-[#71717A] hover:text-black dark:hover:text-white'
+                            ? 'bg-black text-white dark:bg-white dark:text-black'
+                            : 'text-[#71717A] hover:text-black dark:hover:text-white'
                             }`}
                     >
-                        {range === 'year' ? 'This Year' : `Last ${range.replace('d', ' Days')}`}
+                        {range === 'year' ? 'This Year' : range === 'all' ? 'All Time' : `Last ${range.replace('d', ' Days')}`}
                     </button>
                 ))}
             </div>

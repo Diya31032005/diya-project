@@ -107,6 +107,119 @@ export const subscribeToUserStats = (uid, callback) => {
 
 // --- Logger / Tracker ---
 
+// --- Logger / Tracker ---
+
+const updateSyllabusWithLog = async (uid, subject, topic) => {
+    if (!topic) return;
+
+    try {
+        const syllabusRef = doc(db, "syllabi", uid);
+        const snap = await getDoc(syllabusRef);
+
+        if (!snap.exists()) return;
+
+        const data = snap.data();
+        let syllabi = data.syllabi;
+        if (!syllabi) return;
+
+        let activeId = data.activeSyllabusId || Object.keys(syllabi)[0];
+        if (!activeId || !syllabi[activeId]) return;
+
+        let activeSyllabus = syllabi[activeId];
+        let items = [...activeSyllabus.items];
+        let completed = new Set(activeSyllabus.completed || []);
+        let modified = false;
+
+        // Helper to find node by title (case-insensitive)
+        const findNode = (list, title) => {
+            for (const item of list) {
+                if (item.title.toLowerCase() === title.toLowerCase()) return item;
+                if (item.children) {
+                    const found = findNode(item.children, title);
+                    if (found) return found;
+                }
+            }
+            return null;
+        };
+
+        // 1. Try to find the topic directly
+        const existingTopicNode = findNode(items, topic);
+
+        if (existingTopicNode) {
+            if (!completed.has(existingTopicNode.id)) {
+                completed.add(existingTopicNode.id);
+                modified = true;
+            }
+        } else {
+            // 2. Topic not found. Create it.
+            const subjectName = subject || "General";
+            let subjectNode = findNode(items, subjectName);
+
+            const newTopicNode = {
+                id: `auto-${Date.now()}`,
+                title: topic,
+                children: [] // Leaf node
+            };
+
+            if (subjectNode) {
+                // Add to existing subject
+                const addRecursive = (list) => {
+                    return list.map(item => {
+                        if (item.id === subjectNode.id) {
+                            return { ...item, children: [...(item.children || []), newTopicNode] };
+                        }
+                        if (item.children) {
+                            return { ...item, children: addRecursive(item.children) };
+                        }
+                        return item;
+                    });
+                };
+                items = addRecursive(items);
+            } else {
+                // Create new subject node
+                const newSubjectNode = {
+                    id: `auto-subj-${Date.now()}`,
+                    title: subjectName,
+                    children: [newTopicNode]
+                };
+                items.push(newSubjectNode);
+            }
+
+            // Mark the new topic as completed
+            completed.add(newTopicNode.id);
+            modified = true;
+        }
+
+        if (modified) {
+            activeSyllabus.items = items;
+            activeSyllabus.completed = [...completed];
+            syllabi[activeId] = activeSyllabus;
+
+            await setDoc(syllabusRef, { syllabi, activeSyllabusId: activeId }, { merge: true });
+
+            // Update user progress stats
+            let totalCompleted = 0;
+            let totalTopics = 0;
+
+            const countItems = (list) => {
+                let c = 0;
+                const traverse = (l) => { l.forEach(i => { c++; if (i.children) traverse(i.children); }) };
+                traverse(list);
+                return c;
+            };
+
+            Object.values(syllabi).forEach(s => {
+                totalCompleted += (s.completed || []).length;
+                totalTopics += countItems(s.items || []);
+            });
+
+            await updateUserProgress(uid, totalCompleted, totalTopics);
+        }
+    } catch (e) {
+        console.error("Error auto-updating syllabus:", e);
+    }
+};
+
 export const logStudySession = async (uid, data) => {
     // data: { subject, topic, durationMinutes, mode, timestamp (optional - for manual entries) }
     try {
@@ -136,7 +249,7 @@ export const logStudySession = async (uid, data) => {
             totalSessions: increment(1)
         });
 
-        // 3. Update Streak if this is a study session for today
+        // 3. Update Streak
         const today = new Date();
         const isToday = sessionDate.toDateString() === today.toDateString();
 
@@ -145,7 +258,6 @@ export const logStudySession = async (uid, data) => {
             const yesterday = new Date();
             yesterday.setDate(yesterday.getDate() - 1);
 
-            // Check if already studied today
             const alreadyStudiedToday = lastStudyDate && lastStudyDate.toDateString() === today.toDateString();
 
             if (!alreadyStudiedToday) {
@@ -153,20 +265,20 @@ export const logStudySession = async (uid, data) => {
                     lastStudyDate: Timestamp.now()
                 };
 
-                // Check if studied yesterday (continue streak) or not (reset streak)
                 if (lastStudyDate && lastStudyDate.toDateString() === yesterday.toDateString()) {
-                    // Continue streak
                     const newStreak = (userData.currentStreak || 0) + 1;
                     updates.currentStreak = newStreak;
                     updates.bestStreak = Math.max(userData.bestStreak || 0, newStreak);
                 } else if (!lastStudyDate || lastStudyDate.toDateString() !== today.toDateString()) {
-                    // Start/reset streak
                     updates.currentStreak = 1;
                 }
 
                 await updateDoc(userRef, updates);
             }
         }
+
+        // 4. Update Syllabus Progress
+        await updateSyllabusWithLog(uid, data.subject, data.topic);
 
         return true;
     } catch (e) {
@@ -458,5 +570,48 @@ export const subscribeToUserSyllabus = (uid, callback) => {
     }, (error) => {
         console.error("Error subscribing to syllabus:", error);
         callback(null);
+    });
+};
+
+export const saveUserSyllabus = async (uid, data) => {
+    try {
+        await setDoc(doc(db, "syllabi", uid), data, { merge: true });
+        return true;
+    } catch (e) {
+        console.error("Error saving syllabus:", e);
+        return false;
+    }
+};
+
+// --- Daily Stats (Calendar) ---
+
+export const saveDailyStats = async (uid, date, stats) => {
+    // date: YYYY-MM-DD
+    try {
+        await setDoc(doc(db, "users", uid, "dailyStats", date), {
+            ...stats,
+            updatedAt: Timestamp.now()
+        }, { merge: true });
+        return true;
+    } catch (e) {
+        console.error("Error saving daily stats:", e);
+        return false;
+    }
+};
+
+export const subscribeToMonthStats = (uid, yearMonth, callback) => {
+    // yearMonth: YYYY-MM
+    const q = query(
+        collection(db, "users", uid, "dailyStats"),
+        where("__name__", ">=", `${yearMonth}-01`),
+        where("__name__", "<=", `${yearMonth}-31`)
+    );
+
+    return onSnapshot(q, (snapshot) => {
+        const stats = {};
+        snapshot.forEach((doc) => {
+            stats[doc.id] = doc.data();
+        });
+        callback(stats);
     });
 };

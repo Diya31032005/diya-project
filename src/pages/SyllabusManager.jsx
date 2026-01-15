@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { SYLLABUS_DATA } from '../lib/syllabus-data';
 import { ChevronRight, ChevronDown, CheckCircle2, Circle, BookOpen, Plus, Trash2, RotateCcw, X, Search, CheckSquare, Filter, FolderPlus, Folder, ChevronLeft, Edit2, Save } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
-import { updateUserProgress } from '../lib/db';
+import { updateUserProgress, saveUserSyllabus } from '../lib/db';
 import { ConfirmDialog, useConfirmDialog } from '../components/ui/ConfirmDialog';
 import toast from '../components/ui/Toast';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -59,7 +59,10 @@ export default function SyllabusManager() {
     // Sync to localStorage
     useEffect(() => {
         localStorage.setItem('syllabi_list', JSON.stringify(syllabi));
-    }, [syllabi]);
+        if (user) {
+            saveUserSyllabus(user.uid, { syllabi, activeSyllabusId });
+        }
+    }, [syllabi, activeSyllabusId, user]);
 
     useEffect(() => {
         localStorage.setItem('active_syllabus', activeSyllabusId);
@@ -126,11 +129,49 @@ export default function SyllabusManager() {
     };
 
     const toggleItem = (id) => {
-        const currentCompleted = activeSyllabus?.completed || [];
-        const newCompleted = currentCompleted.includes(id)
-            ? currentCompleted.filter(i => i !== id)
-            : [...currentCompleted, id];
-        updateActiveSyllabus({ completed: newCompleted });
+        const currentCompleted = new Set(activeSyllabus?.completed || []);
+
+        // Helper to find node and all its descendants
+        const findNodeAndChildren = (nodes, targetId) => {
+            for (const node of nodes) {
+                if (node.id === targetId) {
+                    const ids = [node.id];
+                    const promptChildren = (n) => {
+                        if (n.children) {
+                            n.children.forEach(c => {
+                                ids.push(c.id);
+                                promptChildren(c);
+                            });
+                        }
+                    };
+                    promptChildren(node);
+                    return ids;
+                }
+                if (node.children) {
+                    const found = findNodeAndChildren(node.children, targetId);
+                    if (found) return found;
+                }
+            }
+            return null;
+        };
+
+        const targetIds = findNodeAndChildren(items, id);
+        if (!targetIds) return;
+
+        // Determine if we are checking or unchecking based on the clicked item
+        const isCompleted = currentCompleted.has(id);
+        // If currently completed, we uncheck. If not, we check.
+
+        const newCompleted = new Set(currentCompleted);
+        targetIds.forEach(tid => {
+            if (isCompleted) {
+                newCompleted.delete(tid);
+            } else {
+                newCompleted.add(tid);
+            }
+        });
+
+        updateActiveSyllabus({ completed: [...newCompleted] });
     };
 
     const markSectionComplete = (item) => {
@@ -609,6 +650,11 @@ function Node({ item, level, completedItems, toggleItem, onDelete, onAddChild, o
                     : 'border-transparent hover:border-black/5 dark:hover:border-white/5'
                     }`}
                 style={{ marginLeft: `${level * 24}px` }}
+                as={motion.div}
+                layout
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ duration: 0.3, delay: level * 0.05 }}
             >
                 {/* Checkbox */}
                 <button

@@ -145,7 +145,7 @@ export default function Planner() {
 
             {/* Progress Bar */}
             {tasks.length > 0 && (
-                <motion.div 
+                <motion.div
                     className="card p-4"
                     initial={{ opacity: 0, y: -10 }}
                     animate={{ opacity: 1, y: 0 }}
@@ -184,11 +184,10 @@ export default function Planner() {
                                     key={key}
                                     type="button"
                                     onClick={() => setNewPriority(key)}
-                                    className={`px-3 py-2 rounded text-xs font-medium transition-all flex items-center gap-1 ${
-                                        newPriority === key 
-                                            ? 'bg-black text-white dark:bg-white dark:text-black' 
+                                    className={`px-3 py-2 rounded text-xs font-medium transition-all flex items-center gap-1 ${newPriority === key
+                                            ? 'bg-black text-white dark:bg-white dark:text-black'
                                             : 'text-[#71717A] hover:text-black dark:hover:text-white'
-                                    }`}
+                                        }`}
                                     title={`${config.label} Priority`}
                                 >
                                     <Flag className="w-3 h-3" />
@@ -217,11 +216,10 @@ export default function Planner() {
                     <button
                         key={f}
                         onClick={() => setFilter(f)}
-                        className={`px-4 py-2 rounded text-sm font-medium transition-all ${
-                            filter === f
+                        className={`px-4 py-2 rounded text-sm font-medium transition-all ${filter === f
                                 ? 'bg-black text-white dark:bg-white dark:text-black'
                                 : 'text-[#71717A] hover:text-black dark:hover:text-white'
-                        }`}
+                            }`}
                     >
                         {f.charAt(0).toUpperCase() + f.slice(1)}
                         <span className="ml-1 opacity-70">
@@ -237,7 +235,7 @@ export default function Planner() {
             <div className="space-y-3">
                 <AnimatePresence mode="popLayout">
                     {sortedTasks.length === 0 ? (
-                        <motion.div 
+                        <motion.div
                             initial={{ opacity: 0 }}
                             animate={{ opacity: 1 }}
                             className="card p-12 text-center"
@@ -256,18 +254,16 @@ export default function Planner() {
                                 exit={{ opacity: 0, x: -20 }}
                                 transition={{ delay: index * 0.05 }}
                                 layout
-                                className={`card p-4 flex items-center gap-4 transition-all group ${
-                                    task.completed ? 'opacity-60' : ''
-                                }`}
+                                className={`card p-4 flex items-center gap-4 transition-all group ${task.completed ? 'opacity-60' : ''
+                                    }`}
                             >
                                 {/* Priority Indicator */}
-                                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
-                                    task.priority === 'high' 
-                                        ? 'bg-black dark:bg-white ring-2 ring-black/20 dark:ring-white/20' 
-                                        : task.priority === 'low' 
-                                            ? 'bg-[#71717A]' 
+                                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${task.priority === 'high'
+                                        ? 'bg-black dark:bg-white ring-2 ring-black/20 dark:ring-white/20'
+                                        : task.priority === 'low'
+                                            ? 'bg-[#71717A]'
                                             : 'bg-black dark:bg-white'
-                                }`} />
+                                    }`} />
 
                                 {/* Checkbox */}
                                 <button
@@ -310,22 +306,20 @@ export default function Planner() {
                                     </div>
                                 ) : (
                                     <>
-                                        <span className={`flex-1 ${
-                                            task.completed 
-                                                ? 'text-[#71717A] line-through' 
+                                        <span className={`flex-1 ${task.completed
+                                                ? 'text-[#71717A] line-through'
                                                 : ''
-                                        }`}>
+                                            }`}>
                                             {task.text}
                                         </span>
 
                                         {/* Priority Badge */}
-                                        <span className={`px-2 py-1 rounded text-xs font-medium border ${
-                                            task.priority === 'high' 
-                                                ? 'border-black dark:border-white bg-black/5 dark:bg-white/5' 
+                                        <span className={`px-2 py-1 rounded text-xs font-medium border ${task.priority === 'high'
+                                                ? 'border-black dark:border-white bg-black/5 dark:bg-white/5'
                                                 : task.priority === 'low'
                                                     ? 'border-black/10 dark:border-white/10 text-[#71717A]'
                                                     : 'border-black/10 dark:border-white/10'
-                                        }`}>
+                                            }`}>
                                             {PRIORITY_CONFIG[task.priority]?.label || 'Medium'}
                                         </span>
 
